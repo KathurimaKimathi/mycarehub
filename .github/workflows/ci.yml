@@ -31,10 +31,10 @@ env:
   SAVANNAH_ADMIN_EMAIL: ${{ secrets.SAVANNAH_ADMIN_EMAIL }}
   CLOUDSDK_PYTHON: python2
   POSTGRES_HOST: localhost
-  POSTGRES_PORT: 5432
-  POSTGRES_DB: postgres
-  POSTGRES_USER: postgres
-  POSTGRES_PASSWORD: postgres
+  POSTGRES_PORT: 5433
+  POSTGRES_DB: "mycarehub_test"
+  POSTGRES_USER: "mycarehub_user"
+  POSTGRES_PASSWORD: "user@123"
   GHOST_CMS_API_ENDPOINT: ${{ secrets.GHOST_CMS_API_ENDPOINT }}
   GHOST_CMS_API_KEY: ${{ secrets.GHOST_CMS_API_KEY }}
   MAILGUN_API_KEY: ${{ secrets.MAILGUN_API_KEY }}
@@ -78,18 +78,28 @@ jobs:
         go-version: [1.17.x]
         os: [ubuntu-latest]
     runs-on: ${{ matrix.os }}
+    permissions:
+      contents: read, write, execute, delete
+      packages: read, write, execute, delete
     services:
       postgres:
-        image: postgis/postgis:14-3.1
+        image: postgres:10.5-alpine
         env:
-          POSTGRES_USER: postgres
-          POSTGRES_PASSWORD: postgres
-          POSTGRES_DB: postgres
+          POSTGRES_USER: "mycarehub_user"
+          # POSTGRES_PASSWORD: "user@123"
+          POSTGRES_DB: "mycarehub_test"
         ports:
-          - 5432:5432
+          - 5433:5433
         options: --health-cmd pg_isready --health-interval 10s --health-timeout 5s --health-retries 5
         
     steps:
+      - name: log envs
+        run: | 
+          echo "POSTGRES_HOST =>> ${POSTGRES_HOST}"
+          echo "POSTGRES_USER =>> ${POSTGRES_USER}"
+          echo "POSTGRES_PASSWORD =>> ${POSTGRES_PASSWORD}"
+          echo "POSTGRES_PORT =>> ${POSTGRES_PORT}"
+
       - name: Set up Python 3.10
         uses: actions/setup-python@v2
         with:
@@ -109,15 +119,34 @@ jobs:
         
       - name: Access cloned repository contents
         run: |
-          sudo apt-get update && sudo apt-get upgrade
-          sudo apt-get install postgis gdal-bin libgdal-dev
+          sudo apt-get update && sudo apt-get upgrade -y
+          sudo apt-get install gdal-bin libgdal-dev 
+          sudo apt install postgis
           pip install -r requirements/local.txt && pip install -r requirements/production.txt
+          psql --version
+          sudo systemctl stop postgresql
+          sudo systemctl start postgresql
+          sudo systemctl enable postgresql
+          sudo systemctl status postgresql
+          ls -al /var/run/postgresql/.s.PGSQL.5433
+          echo "Access cloned repository contents >>>>"
+
+          POSTGRES_USER=mycarehub_user
+          POSTGRES_DB=mycarehub_test
+
+          sudo -u postgres psql -c "CREATE USER ${POSTGRES_USER};"
+          sudo -u postgres psql -c "CREATE DATABASE ${POSTGRES_DB} WITH OWNER ${POSTGRES_USER} ENCODING 'UTF8' LC_COLLATE 'en_US.UTF-8' LC_CTYPE 'en_US.UTF-8' TEMPLATE template0;"
+          sudo -u postgres psql -c "GRANT ALL PRIVILEGES ON DATABASE ${POSTGRES_DB} TO ${POSTGRES_USER};"
+
+          sudo systemctl restart postgresql
+
           npm ci
           npm install -g mjml
 
           python manage.py migrate
           python manage.py createcachetable
 
+          
       - uses: actions/checkout@v2
       - uses: google-github-actions/setup-gcloud@master
         with:
